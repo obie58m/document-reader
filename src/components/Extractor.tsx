@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ExtractionResult, QuantityKind } from "@/lib/extract/types";
+import type { ExtractionResult, QuantityKind, Refusal } from "@/lib/extract/types";
 import { trpc } from "@/lib/trpc/client";
 
 const MAX_BYTES = 15 * 1024 * 1024;
@@ -10,6 +10,14 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} bytes`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function refusalEvidence(refusal: Refusal): string | null {
+  if (refusal.sourceText?.startsWith("Page ")) return refusal.sourceText;
+  if (refusal.page != null && refusal.sourceText) return `Page ${refusal.page}: “${refusal.sourceText}”`;
+  if (refusal.sourceText) return `“${refusal.sourceText}”`;
+  if (refusal.page != null) return `Page ${refusal.page}`;
+  return null;
 }
 
 function quantityLabel(kind: QuantityKind): string {
@@ -219,8 +227,8 @@ function Result({ result, fileName }: { result: ExtractionResult; fileName: stri
             {result.refusals.map((refusal, index) => (
               <li key={`${refusal.page}-${index}`} className="rounded-lg border border-[var(--stamp-line)] bg-[var(--stamp-bg)] px-4 py-3">
                 <p className="text-sm leading-6 text-[var(--ink)]">{refusal.explanation}</p>
-                {refusal.sourceText ? (
-                  <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">Printed text: “{refusal.sourceText}”</p>
+                {refusalEvidence(refusal) ? (
+                  <p className="mt-2 text-xs leading-5 whitespace-pre-line text-[var(--ink-soft)]">{refusalEvidence(refusal)}</p>
                 ) : null}
               </li>
             ))}

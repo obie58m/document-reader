@@ -625,6 +625,54 @@ function refusePending(
   return null;
 }
 
+function statedCountConflicts(lines: Line[]): Refusal[] {
+  const hits: Array<{ count: string; text: string; page: number; kind: "loaded" | "unloaded" }> = [];
+  for (const line of lines) {
+    const text = joinAtoms(line.items);
+    const match = text.match(/\b(\d+)\s+pallets?\s+(loaded|unloaded)\b/i);
+    if (!match) continue;
+    hits.push({
+      count: match[1],
+      text,
+      page: line.page,
+      kind: match[2].toLowerCase() === "loaded" ? "loaded" : "unloaded",
+    });
+  }
+
+  const loaded = hits.find((hit) => hit.kind === "loaded");
+  const unloaded = hits.find((hit) => hit.kind === "unloaded");
+  if (!loaded || !unloaded || loaded.count === unloaded.count) return [];
+
+  const where =
+    loaded.page === unloaded.page
+      ? `On page ${loaded.page}, the document says “${loaded.count}” pallets were loaded and “${unloaded.count}” pallets were unloaded.`
+      : `Page ${loaded.page} says “${loaded.count}” pallets were loaded, and page ${unloaded.page} says “${unloaded.count}” pallets were unloaded.`;
+
+  return [
+    {
+      page: loaded.page,
+      explanation: `${where} Those disagree, so neither was used as a quantity.`,
+      sourceText: `Page ${loaded.page}: “${loaded.text}”\nPage ${unloaded.page}: “${unloaded.text}”`,
+    },
+  ];
+}
+
+function looseQuantityRefusals(lines: Line[], consumed: Set<Line>): Refusal[] {
+  const refusals: Refusal[] = [];
+  for (const line of lines) {
+    if (consumed.has(line)) continue;
+    const text = joinAtoms(line.items);
+    if (!/\b(?:qty|quantity)\b/i.test(text)) continue;
+    if (!/\d/.test(text)) continue;
+    refusals.push({
+      page: line.page,
+      explanation: `A quantity is mentioned outside a labeled table (“${text}”). It was not turned into a line item, because it is not under a quantity heading.`,
+      sourceText: text,
+    });
+  }
+  return refusals;
+}
+
 function disagreeingFigures(figures: PrintedFigure[]): Refusal[] {
   const groups = new Map<string, PrintedFigure[]>();
   for (const figure of figures) {
@@ -679,22 +727,6 @@ function noteTotalMismatch(lineItems: LineItem[], figures: PrintedFigure[], refu
     explanation: `The printed ${figures[0].label.toLowerCase()} “${figures[0].value}” on page ${figures[0].page} does not match the printed line amounts. No replacement total was created.`,
     sourceText: figures[0].sourceText,
   };
-}
-
-function looseQuantityRefusals(lines: Line[], consumed: Set<Line>): Refusal[] {
-  const refusals: Refusal[] = [];
-  for (const line of lines) {
-    if (consumed.has(line)) continue;
-    const text = joinAtoms(line.items);
-    if (!/\b(?:qty|quantity)\b/i.test(text)) continue;
-    if (!/\d/.test(text)) continue;
-    refusals.push({
-      page: line.page,
-      explanation: `A quantity is mentioned outside a labeled table (“${text}”). It was not turned into a line item, because it is not under a quantity heading.`,
-      sourceText: text,
-    });
-  }
-  return refusals;
 }
 
 export function extractDocument(atoms: TextAtom[], pageCountInput?: number): ExtractionResult {
@@ -802,6 +834,7 @@ export function extractDocument(atoms: TextAtom[], pageCountInput?: number): Ext
   refusals.push(...disagreeingFigures(printedFigures));
   const mismatch = noteTotalMismatch(lineItems, printedFigures, refusals);
   if (mismatch) refusals.push(mismatch);
+  refusals.push(...statedCountConflicts(lines));
   refusals.push(...looseQuantityRefusals(lines, consumed));
 
   return { pageCount, lineItems, printedFigures, refusals };

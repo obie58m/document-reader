@@ -410,6 +410,30 @@ describe("refusal rules", () => {
     expect(explanations).not.toMatch(/Document No/);
   });
 
+  it("names the page when loaded and unloaded pallet counts disagree", () => {
+    const result = extractDocument(
+      [
+        ...invoice([
+          [
+            ["Pine", 40],
+            ["4", 300],
+          ],
+        ]),
+        text(1, 560, 40, "Summary: 14 pallets loaded at depot.", 280),
+        text(1, 530, 40, "Driver notes: 16 pallets unloaded at site.", 320),
+      ],
+      1,
+    );
+
+    expect(quantities(result)).toEqual(["4"]);
+    const refusal = result.refusals.find((item) => item.explanation.includes("pallets"));
+    expect(refusal?.explanation).toMatch(/On page 1/);
+    expect(refusal?.sourceText).toMatch(/Page 1: “Summary: 14 pallets loaded at depot\.”/);
+    expect(refusal?.sourceText).toMatch(/Page 1: “Driver notes: 16 pallets unloaded at site\.”/);
+    expect(quantities(result)).not.toContain("14");
+    expect(quantities(result)).not.toContain("16");
+  });
+
   it("does not accept a shorter number as evidence for a longer one", () => {
     expect(textContainsToken("50", "Quantity 500")).toBe(false);
     expect(textContainsToken("500", "Quantity 500")).toBe(true);
@@ -417,6 +441,37 @@ describe("refusal rules", () => {
     expect(textContainsToken("1,250.00", "TOTAL $1,250.00")).toBe(true);
     expect(textContainsToken("24", "Pine 2400x1200")).toBe(false);
   });
+
+  it("refuses totals that disagree on different pages and keeps both line items", () => {
+    const result = extractDocument(
+      [
+        text(1, 700, 40, "Description"),
+        text(1, 700, 300, "Qty"),
+        text(1, 700, 460, "Amount"),
+        text(1, 670, 40, "Pine"),
+        text(1, 670, 300, "2"),
+        text(1, 670, 460, "10.00"),
+        text(1, 640, 40, "Total:"),
+        text(1, 640, 460, "$100.00"),
+        text(2, 700, 40, "Description"),
+        text(2, 700, 300, "Qty"),
+        text(2, 700, 460, "Amount"),
+        text(2, 670, 40, "Bolts"),
+        text(2, 670, 300, "4"),
+        text(2, 670, 460, "8.00"),
+        text(2, 640, 40, "Total:"),
+        text(2, 640, 460, "$120.00"),
+      ],
+      2,
+    );
+
+    expect(quantities(result)).toEqual(["2", "4"]);
+    expect(result.printedFigures.map((figure) => figure.value)).toEqual(["100.00", "120.00"]);
+    expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).toMatch(
+      /“100\.00” on page 1 and “120\.00” on page 2/,
+    );
+  });
+
   it("refuses an empty document instead of inventing line items", () => {
     const result = extractDocument([], 1);
     expect(result.lineItems).toEqual([]);
