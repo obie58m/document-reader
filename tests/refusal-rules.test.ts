@@ -32,15 +32,15 @@ function quantities(result: ExtractionResult): string[] {
 
 function assertEveryNumberIsSourced(result: ExtractionResult) {
   for (const item of result.lineItems) {
-    expect(item.quantity.sourceText.includes(item.quantity.value)).toBe(true);
+    expect(textContainsToken(item.quantity.value, item.quantity.sourceText)).toBe(true);
     expect(item.description.sourceText).toContain(item.description.value);
     expect(item.quantity.page).toBeGreaterThan(0);
-    if (item.unitPrice) expect(item.unitPrice.sourceText.includes(item.unitPrice.value)).toBe(true);
-    if (item.amount) expect(item.amount.sourceText.includes(item.amount.value)).toBe(true);
+    if (item.unitPrice) expect(textContainsToken(item.unitPrice.value, item.unitPrice.sourceText)).toBe(true);
+    if (item.amount) expect(textContainsToken(item.amount.value, item.amount.sourceText)).toBe(true);
     if (item.unit) expect(item.unit.sourceText).toContain(item.unit.value);
   }
   for (const figure of result.printedFigures) {
-    expect(figure.sourceText.includes(figure.value)).toBe(true);
+    expect(textContainsToken(figure.value, figure.sourceText)).toBe(true);
     expect(figure.page).toBeGreaterThan(0);
   }
 }
@@ -62,7 +62,7 @@ describe("refusal rules", () => {
     expect(result.lineItems[0]?.description.value).toBe("Pine 90x45");
     expect(result.lineItems[0]?.quantity.page).toBe(1);
     expect(result.lineItems[0]?.quantity.sourceText).toContain("Pine 90x45");
-    expect((result.lineItems[0]?.quantity.sourceText ?? "").includes("24")).toBe(true);
+    expect(textContainsToken("24", result.lineItems[0]?.quantity.sourceText ?? "")).toBe(true);
     expect(result.lineItems[0]?.amount?.value).toBe("204.00");
     expect(result.refusals).toEqual([]);
     assertEveryNumberIsSourced(result);
@@ -212,6 +212,108 @@ describe("refusal rules", () => {
     expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).toMatch(/does not sit clearly/);
   });
 
+  it("does not invent a total when the printed total disagrees with the line amounts", () => {
+    const result = extractDocument(
+      invoice([
+        [
+          ["Pine", 40],
+          ["2", 300],
+          ["10.00", 460],
+        ],
+        [
+          ["Bolts", 40],
+          ["1", 300],
+          ["5.00", 460],
+        ],
+        [
+          ["Total", 40],
+          ["12.00", 460],
+        ],
+      ]),
+      1,
+    );
+
+    expect(quantities(result)).toEqual(["2", "1"]);
+    expect(result.printedFigures.map((figure) => figure.value)).toEqual(["12.00"]);
+    expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).toMatch(/does not match the printed line amounts/);
+    expect(JSON.stringify(result)).not.toContain("15");
+    assertEveryNumberIsSourced(result);
+  });
+
+  it("leaves a matching total in place and does not add a calculated figure", () => {
+    const result = extractDocument(
+      invoice([
+        [
+          ["Pine", 40],
+          ["2", 300],
+          ["10.00", 460],
+        ],
+        [
+          ["Bolts", 40],
+          ["1", 300],
+          ["5.00", 460],
+        ],
+        [
+          ["Total", 40],
+          ["15.00", 460],
+        ],
+      ]),
+      1,
+    );
+
+    expect(result.printedFigures.map((figure) => figure.value)).toEqual(["15.00"]);
+    expect(result.refusals).toEqual([]);
+  });
+
+  it("does not call a GST invoice contradictory just because the total is larger than the lines", () => {
+    const result = extractDocument(
+      invoice([
+        [
+          ["Pine", 40],
+          ["2", 300],
+          ["10.00", 460],
+        ],
+        [
+          ["GST", 40],
+          ["1.50", 460],
+        ],
+        [
+          ["Total", 40],
+          ["11.50", 460],
+        ],
+      ]),
+      1,
+    );
+
+    expect(result.printedFigures.map((figure) => figure.value)).toEqual(["1.50", "11.50"]);
+    expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).not.toMatch(/does not match/);
+  });
+
+  it("surfaces two different printed totals instead of choosing one", () => {
+    const result = extractDocument(
+      invoice([
+        [
+          ["Pine", 40],
+          ["2", 300],
+          ["10.00", 460],
+        ],
+        [
+          ["Total", 40],
+          ["10.00", 460],
+        ],
+        [
+          ["Total", 40],
+          ["9.00", 460],
+        ],
+      ]),
+      1,
+    );
+
+    expect(result.printedFigures.map((figure) => figure.value)).toEqual(["10.00", "9.00"]);
+    expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).toMatch(/disagree/);
+    expect(result.lineItems).toHaveLength(1);
+  });
+
   it("keeps a bad unit price from removing a sourced quantity", () => {
     const result = extractDocument(
       [
@@ -241,7 +343,7 @@ describe("refusal rules", () => {
 
     expect(quantities(result)).toEqual(["24"]);
     expect(result.lineItems[0]?.quantity.sourceText).toContain("Pine 90x45");
-    expect((result.lineItems[0]?.quantity.sourceText ?? "").includes("24")).toBe(true);
+    expect(textContainsToken("24", result.lineItems[0]?.quantity.sourceText ?? "")).toBe(true);
     expect(result.lineItems[0]?.description.value).toBe("Pine 90x45");
   });
 
@@ -260,6 +362,26 @@ describe("refusal rules", () => {
     expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).toMatch(/Page 2 has no readable text/);
   });
 
+  it("records a printed total instead of treating the word Total as a quantity", () => {
+    const result = extractDocument(
+      [
+        ...invoice([
+          [
+            ["Pine", 40],
+            ["2", 300],
+            ["10.00", 460],
+          ],
+        ]),
+        text(1, 600, 40, "Total: $10.00", 180),
+      ],
+      1,
+    );
+
+    expect(quantities(result)).toEqual(["2"]);
+    expect(result.printedFigures.map((figure) => figure.value)).toEqual(["10.00"]);
+    expect(result.printedFigures[0]?.sourceText).toContain("Total:");
+    expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).not.toMatch(/quantity of “Total/i);
+  });
   it("does not accept a shorter number as evidence for a longer one", () => {
     expect(textContainsToken("50", "Quantity 500")).toBe(false);
     expect(textContainsToken("500", "Quantity 500")).toBe(true);
@@ -267,7 +389,6 @@ describe("refusal rules", () => {
     expect(textContainsToken("1,250.00", "TOTAL $1,250.00")).toBe(true);
     expect(textContainsToken("24", "Pine 2400x1200")).toBe(false);
   });
-
   it("refuses an empty document instead of inventing line items", () => {
     const result = extractDocument([], 1);
     expect(result.lineItems).toEqual([]);

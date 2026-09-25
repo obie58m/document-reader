@@ -1,5 +1,5 @@
-import { isFigureLabel, hasLetters, isIgnoredLine, joinAtoms, matchRole, splitWide, clusterLine, groupLines } from "./lines";
-import { readMoney, readQuantity, textContainsToken } from "./numbers";
+import { isFigureLabel, hasLetters, isIgnoredLine, joinAtoms, matchRole, normalizeLabel, splitWide, clusterLine, groupLines } from "./lines";
+import { readMoney, readQuantity, textContainsToken, toCents } from "./numbers";
 import type {
   ColumnRole,
   ExtractionResult,
@@ -253,6 +253,16 @@ function pushItem(
   });
 }
 
+function labeledTotal(lineText: string): { label: string; value: string } | null {
+  const match = lineText.match(
+    /^(total|grand total|subtotal|sub total|gst|g\.s\.t\.?|invoice total|amount due|balance due)\s*:\s*(.+)$/i,
+  );
+  if (!match) return null;
+  const money = readMoney(match[2]);
+  if (money.status !== "value" || !textContainsToken(money.printed, lineText)) return null;
+  return { label: match[1].replace(/\s+/g, " ").trim(), value: money.printed };
+}
+
 function interpretRow(
   line: Line,
   header: Header,
@@ -264,6 +274,17 @@ function interpretRow(
   const lineText = joinAtoms(line.items);
   if (isIgnoredLine(lineText)) {
     return { pending, produced: false };
+  }
+
+  const total = labeledTotal(lineText);
+  if (total) {
+    printedFigures.push({
+      label: total.label,
+      value: total.value,
+      page: line.page,
+      sourceText: lineText,
+    });
+    return { pending: refusePending(pending, line.page, refusals), produced: true };
   }
 
   const { ambiguous, cells } = cellsFor(line, header);
@@ -604,6 +625,62 @@ function refusePending(
   return null;
 }
 
+function disagreeingFigures(figures: PrintedFigure[]): Refusal[] {
+  const groups = new Map<string, PrintedFigure[]>();
+  for (const figure of figures) {
+    const key = normalizeLabel(figure.label);
+    const group = groups.get(key) ?? [];
+    group.push(figure);
+    groups.set(key, group);
+  }
+
+  const refusals: Refusal[] = [];
+  for (const group of groups.values()) {
+    const distinct = group.filter(
+      (figure, index) => group.findIndex((other) => other.page === figure.page && other.value === figure.value) === index,
+    );
+    const values = [...new Set(distinct.map((figure) => figure.value))];
+    if (values.length < 2) continue;
+    const sample = distinct[0];
+    refusals.push({
+      page: sample.page,
+      explanation: `“${sample.label}” is printed as ${distinct.map((figure) => `“${figure.value}” on page ${figure.page}`).join(" and ")}. Those values disagree, so neither was chosen.`,
+      sourceText: distinct.map((figure) => figure.sourceText).join(" | "),
+    });
+  }
+  return refusals;
+}
+
+const TAX_OR_ADJUSTMENT = /gst|tax|vat|freight|shipping|discount/i;
+
+function noteTotalMismatch(lineItems: LineItem[], figures: PrintedFigure[], refusals: Refusal[]): Refusal | null {
+  if (refusals.length > 0) return null;
+  if (lineItems.length === 0) return null;
+  if (figures.length !== 1) return null;
+  if (TAX_OR_ADJUSTMENT.test(figures[0].label)) return null;
+  if (!/^(?:total|grand total|invoice total|order total|amount due|balance due)$/i.test(normalizeLabel(figures[0].label))) {
+    return null;
+  }
+
+  const lineCents: number[] = [];
+  for (const item of lineItems) {
+    if (!item.amount) return null;
+    const cents = toCents(item.amount.value);
+    if (cents === null) return null;
+    lineCents.push(cents);
+  }
+  const totalCents = toCents(figures[0].value);
+  if (totalCents === null) return null;
+  const sum = lineCents.reduce((total, cents) => total + cents, 0);
+  if (sum === totalCents) return null;
+
+  return {
+    page: figures[0].page,
+    explanation: `The printed ${figures[0].label.toLowerCase()} “${figures[0].value}” on page ${figures[0].page} does not match the printed line amounts. No replacement total was created.`,
+    sourceText: figures[0].sourceText,
+  };
+}
+
 function looseQuantityRefusals(lines: Line[], consumed: Set<Line>): Refusal[] {
   const refusals: Refusal[] = [];
   for (const line of lines) {
@@ -719,6 +796,9 @@ export function extractDocument(atoms: TextAtom[], pageCountInput?: number): Ext
     }
   }
 
+  refusals.push(...disagreeingFigures(printedFigures));
+  const mismatch = noteTotalMismatch(lineItems, printedFigures, refusals);
+  if (mismatch) refusals.push(mismatch);
   refusals.push(...looseQuantityRefusals(lines, consumed));
 
   return { pageCount, lineItems, printedFigures, refusals };
