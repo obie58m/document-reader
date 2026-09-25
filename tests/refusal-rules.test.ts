@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractDocument } from "@/lib/extract/extract-document";
+import { textContainsToken } from "@/lib/extract/numbers";
 import type { ExtractionResult, TextAtom } from "@/lib/extract/types";
 
 function text(page: number, y: number, x: number, str: string, width?: number): TextAtom {
@@ -257,6 +258,14 @@ describe("refusal rules", () => {
 
     expect(quantities(result)).toEqual(["24"]);
     expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).toMatch(/Page 2 has no readable text/);
+  });
+
+  it("does not accept a shorter number as evidence for a longer one", () => {
+    expect(textContainsToken("50", "Quantity 500")).toBe(false);
+    expect(textContainsToken("500", "Quantity 500")).toBe(true);
+    expect(textContainsToken("12", "12.00")).toBe(false);
+    expect(textContainsToken("1,250.00", "TOTAL $1,250.00")).toBe(true);
+    expect(textContainsToken("24", "Pine 2400x1200")).toBe(false);
   });
 
   it("refuses an empty document instead of inventing line items", () => {

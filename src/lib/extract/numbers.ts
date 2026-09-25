@@ -68,6 +68,13 @@ function tokensIn(text: string): string[] {
   return [...text.matchAll(NUMERIC_TOKEN)].map((match) => match[0]);
 }
 
+/** True when `value` is its own number in `sourceText`. `50` does not count inside `500` or `50.00`. */
+export function textContainsToken(value: string, sourceText: string): boolean {
+  if (!value || !sourceText.includes(value)) return false;
+  const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![0-9.,])${escaped}(?![0-9.,])`).test(sourceText);
+}
+
 function looksLikeThousandsOrDecimal(token: string): boolean {
   if (token.includes("/")) return true;
   if (/^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(token)) return true;

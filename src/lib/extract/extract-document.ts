@@ -1,5 +1,5 @@
 import { isFigureLabel, hasLetters, isIgnoredLine, joinAtoms, matchRole, splitWide, clusterLine, groupLines } from "./lines";
-import { readMoney, readQuantity } from "./numbers";
+import { readMoney, readQuantity, textContainsToken } from "./numbers";
 import type {
   ColumnRole,
   ExtractionResult,
@@ -41,11 +41,11 @@ function sourced(value: string, page: number, sourceText: string): SourcedText |
 }
 
 function numberEvidence(value: string, cellSource: string, lineText: string): string {
-  return lineText.includes(value) ? lineText : cellSource;
+  return textContainsToken(value, lineText) ? lineText : cellSource;
 }
 
 function sourcedNumber(value: string, page: number, sourceText: string): SourcedText | null {
-  if (!sourceText.includes(value)) return null;
+  if (!textContainsToken(value, sourceText)) return null;
   return { value, page, sourceText };
 }
 
@@ -235,10 +235,10 @@ function pushItem(
   refusals: Refusal[],
   item: LineItem,
 ): void {
-  const quantityOk = item.quantity.sourceText.includes(item.quantity.value);
+  const quantityOk = textContainsToken(item.quantity.value, item.quantity.sourceText);
   const descriptionOk = item.description.sourceText.includes(item.description.value);
-  const unitPriceOk = !item.unitPrice || item.unitPrice.sourceText.includes(item.unitPrice.value);
-  const amountOk = !item.amount || item.amount.sourceText.includes(item.amount.value);
+  const unitPriceOk = !item.unitPrice || textContainsToken(item.unitPrice.value, item.unitPrice.sourceText);
+  const amountOk = !item.amount || textContainsToken(item.amount.value, item.amount.sourceText);
   const unitOk = !item.unit || item.unit.sourceText.includes(item.unit.value);
 
   if (quantityOk && descriptionOk && unitPriceOk && amountOk && unitOk) {
@@ -569,7 +569,7 @@ function readFigure(
     return;
   }
 
-  if (!lineText.includes(read.printed)) {
+  if (!textContainsToken(read.printed, lineText)) {
     refusals.push({
       page: line.page,
       explanation: `“${label}” on page ${line.page} could not be tied to the printed text, so it was left out.`,
