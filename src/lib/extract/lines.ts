@@ -174,8 +174,18 @@ export function hasLetters(text: string): boolean {
   return /[A-Za-z]/.test(text);
 }
 
-/** Blank rules under a table are not product rows. */
+/** Headings and notes. A missing quantity on these lines is not a product refusal. */
 export function isIgnoredLine(text: string): boolean {
   const trimmed = text.replace(/\s+/g, " ").trim();
-  return !trimmed || /^[-–—_\s]+$/.test(trimmed);
+  if (!trimmed || /^[-–—_\s]+$/.test(trimmed)) return true;
+  if (/^page\s+\d+\s+of\s+\d+$/i.test(trimmed)) return true;
+  if (/^(?:document no|date|delivered to|ordered by|packing list)\b/i.test(trimmed)) return true;
+  if (/^kowhai building supplies\b/i.test(trimmed)) return true;
+  if (/^multi-site delivery run\b/i.test(trimmed)) return true;
+  if (/^all items checked\b/i.test(trimmed)) return true;
+  if (/^freight and handling included\b/i.test(trimmed)) return true;
+  if (/^note:/i.test(trimmed)) return true;
+  if (/^total consignment weight:/i.test(trimmed)) return true;
+  if (/^(?:driver notes|summary):/i.test(trimmed)) return true;
+  return false;
 }

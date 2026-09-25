@@ -382,6 +382,34 @@ describe("refusal rules", () => {
     expect(result.printedFigures[0]?.sourceText).toContain("Total:");
     expect(result.refusals.map((refusal) => refusal.explanation).join(" ")).not.toMatch(/quantity of “Total/i);
   });
+
+  it("does not refuse the letterhead on the next page", () => {
+    const result = extractDocument(
+      [
+        text(1, 700, 40, "Description"),
+        text(1, 700, 300, "Qty"),
+        text(1, 670, 40, "Pine"),
+        text(1, 670, 300, "4"),
+        text(1, 640, 40, "Page 1 of 8", 90),
+        text(2, 780, 40, "Kowhai Building Supplies Ltd", 220),
+        text(2, 750, 40, "Page 2 of 8", 90),
+        text(2, 720, 40, "Document No: KBS-DR118", 180),
+        text(2, 700, 40, "Description"),
+        text(2, 700, 300, "Qty"),
+        text(2, 670, 40, "Bolts"),
+        text(2, 670, 300, "9"),
+      ],
+      2,
+    );
+
+    expect(quantities(result)).toEqual(["4", "9"]);
+    const explanations = result.refusals.map((refusal) => refusal.explanation).join(" ");
+    expect(explanations).not.toMatch(/Page 1 of 8/);
+    expect(explanations).not.toMatch(/Kowhai/);
+    expect(explanations).not.toMatch(/Page 2 of 8/);
+    expect(explanations).not.toMatch(/Document No/);
+  });
+
   it("does not accept a shorter number as evidence for a longer one", () => {
     expect(textContainsToken("50", "Quantity 500")).toBe(false);
     expect(textContainsToken("500", "Quantity 500")).toBe(true);

@@ -742,7 +742,10 @@ export function extractDocument(atoms: TextAtom[], pageCountInput?: number): Ext
     let rowsUnderHeader = 0;
     let sawHeader = false;
     let produced = false;
-    if (carried) header = carried;
+    const ownHeader = onPage.some((line) => detectHeader(line));
+    if (carried && !ownHeader) {
+      header = carried;
+    }
 
     for (const line of onPage) {
       if (lastY !== null && lastY - line.y > ROW_GAP && (header === null || rowsUnderHeader > 0 || skippingToxic)) {
